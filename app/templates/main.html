@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+
+    <style>
+        p.flash{
+            color:red;
+        }
+    </style>
+
+</head>
+<body>
+
+<h1>Manager UI</h1>
+
+<h2>Delete all User info and photo</h2>
+<form method="POST" action="/delete_all_data">
+    <input type="submit" value="Delete data">
+</form>
+
+
+<h2> Manually grow and shrink worker pool </h2>
+<form method="POST" action="/add/1">
+    <input type="submit" value="Add 1 worker">
+</form>
+
+<form method="POST" action="/remove/1">
+    <input type="submit" value="Remove 1 worker">
+</form>
+
+
+<h2>Update auto-scaling parameters </h2>
+
+{% with messages = get_flashed_messages() %}
+{% if messages %}
+    {% for msg in messages %}
+        <p class="flash">{{msg}}</p>
+    {% endfor %}
+{% endif %}
+{% endwith %}
+
+<form method="POST" action="/update_params">
+
+    <label>CPU threshold for growing the worker pool</label> <br>
+    <input type="text" name="util_for_add" value="{{params.util_for_add}}"><br/>
+
+    <label>CPU threshold for shrinking the worker pool</label> <br>
+    <input type="text" name="util_for_remove" value="{{params.util_for_remove}}"><br/>
+
+    <label>Ratio by which to expand the worker pool <br>
+        (e.g., a ratio of 2 doubles the number of workers).</label> <br>
+    <input type="text" name="add_ratio" value="{{params.add_ratio}}"><br/>
+
+    <label>Ratio by which to shrink the worker pool <br>
+        (e.g., a ratio of 4 shuts down 75% of the current workers).</label> <br>
+    <input type="text" name="remove_ratio" value="{{params.remove_ratio}}"><br/>
+
+    <input type="submit" value="Update parameter">
+</form>
+
+
+<h2>Workers</h2>
+<table style="width:50%">
+    <tr>
+        <th>Worker name</th>
+        <th>Instance Id</th>
+        <th>Instance State</th>
+        <th>Status Check</th>
+        <th>Load Balancer Health Check</th>
+        <th>CPU Utilization (%)</th>
+    </tr>
+
+    {% for info in instance_info.values() %}
+    <tr>
+        <td>{{info.name}}</td>
+        <td>{{info.id}}</td>
+        <td>{{info.state_name}}</td>
+        {% if info.status2_2 %}
+        <td>Passed Status checks</td>
+        {% else%}
+        <td>Not yet passed status checks</td>
+        {% endif %}
+        <td>{{info.health_check_status}}</td>
+        <td>{{info.cpu_util}}</td>
+    </tr>
+    {%endfor%}
+
+</table>
+
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+<script>
+
+/*(function(){
+    // do some stuff
+    console.log("lallal");
+     $.ajax({
+            url: '/get_instances',
+            type: 'GET',
+            success: function(response) {
+                console.log(response);
+            },
+            error: function(error) {
+                console.log(error);
+            }
+        });
+    setTimeout(arguments.callee, 5000);
+})();*/
+</script>
+
+
+
+</body>
+</html>
