@@ -5,7 +5,7 @@ import json
 import boto3
 from datetime import datetime, timedelta
 from mysql.connector import connection
-
+from math import *
 import boto3
 
 BUCKET = 'photos-ece1779-a2'
@@ -22,7 +22,7 @@ class InstanceInfo:
 
 class ScalingParams:
     util_for_add = 60.0
-    util_for_remove = 20.0
+    util_for_remove = 1.0
     add_ratio = 2
     remove_ratio = 4
 
@@ -204,6 +204,47 @@ def return_info():
             del prev_instances[key]
     return prev_instances
 
+
+def auto_scaling():
+    # check newly created instance's status if the list is not empty
+    if len(new_created_instances) > 0:
+        for id in new_created_instances:
+            if check_status(id):
+                print("instance id %s is ready"%id)
+                #register to load balancer
+                register_instance(id)
+                new_created_instances.remove(id)
+        return
+
+    # otherwise, check CPU
+    cpu_utils=[]
+    current_instance_num=len(prev_instances)
+    for key, value in prev_instances.items():
+        cpu_util=get_cpu(key)
+        if cpu_util is not None:
+            cpu_utils.append(cpu_util)
+
+    larger_than_add_threshold=[x for x in cpu_utils if x >= ScalingParams.util_for_add]
+    less_than_add_threshold = [x for x in cpu_utils if x <= ScalingParams.util_for_remove]
+    if len(larger_than_add_threshold) == len(less_than_add_threshold) :
+        print("auto-scaling: do nothing")
+        return # do nothing
+    elif len(larger_than_add_threshold) >= len(cpu_utils)/2 :
+        if ScalingParams.add_ratio <= 1 :
+            flash("auto-scaling: Expand working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
+            return
+        create_instance_num = current_instance_num * (ScalingParams.add_ratio-1)
+        print("auto-scaling: add %d new instances"%create_instance_num)
+        #add_instances(create_instance_num)
+    elif len(less_than_add_threshold) >= len(cpu_utils)/2 :
+        if ScalingParams.remove_ratio <= 1 :
+            flash("Shrink working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
+            return
+        terminate_instance_num= floor(current_instance_num - current_instance_num / ScalingParams.remove_ratio)
+        print("auto-scaling: remove %d instances"%terminate_instance_num)
+        #delete_instances(terminate_instance_num)
+
+
 #==================================functions that interact with aws============================================
 
 def list_instances():
@@ -290,11 +331,11 @@ def create_instance(worker_num):
     . venv/bin/activate
     export FLASK_CONFIG=development
     export FLASK_APP=run.py
-    python run.py"""
+    gunicorn --bind 0.0.0.0:5000 wsgi:webapp"""
 
     ec2 = boto3.resource('ec2')
     instance = ec2.create_instances(
-        ImageId='ami-019ac29ec54506d79',
+        ImageId='ami-06d9cdc2781e0470e',
         MinCount=1,
         MaxCount=1,
         KeyName="a2_1779",
@@ -305,7 +346,7 @@ def create_instance(worker_num):
             'Enabled': True
         },
         UserData=user_data_script,
-        SubnetId='subnet-6c951b30',
+        #SubnetId='subnet-6c951b30',
         TagSpecifications=[
             {
                 'ResourceType': 'instance',
@@ -317,7 +358,7 @@ def create_instance(worker_num):
                 ]
             },
         ],
-        InstanceType='t2.micro')
+        InstanceType='t2.small')
     if instance is None or len(instance) == 0:
         return None
     new_instance_id = instance[0].id
