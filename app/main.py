@@ -1,5 +1,5 @@
 
-from flask import render_template, url_for, session, redirect, request, flash
+from flask import render_template, url_for, session, redirect, request, flash, send_from_directory
 from app import webapp
 import json
 import boto3
@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from mysql.connector import connection
 
 import boto3
-import botocore
 
 BUCKET = 'photos-ece1779-a2'
 ARN = "arn:aws:elasticloadbalancing:us-east-1:824599980641:targetgroup/a2workers/300f86a44db73bce"
@@ -32,26 +31,21 @@ new_created_instances = []
 
 @webapp.route('/')
 def main():
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
     response = return_info()
-
-    #print(response)
-    #register_instance("i-0f579be0036a5fd77")
-    #check if newly created instance finish bootup
-    # for id in new_created_instances:
-    #     if check_status(id):
-    #         print("instance id %s is ready"%id)
-    #         #register to load balancer
-    #         register_instance(id)
-    #         new_created_instances.pop(id)
-    #
-    #     else:
-    #         print("instance id %s still booting"%id)
-
-
+    for id in response.keys():
+        get_cpu_graph(id)
     return render_template("main.html", instance_info = response, params = ScalingParams)
 
 @webapp.route('/update_params', methods=["POST"])
 def update_params():
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
     if(request.method == 'POST'):
         if(request.form):
             try:
@@ -66,6 +60,10 @@ def update_params():
 
 @webapp.route('/add/<num>', methods=['POST'])
 def add_instances(num):
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
     # get the largest worker name
     largest_worker = 0
     for key, value in prev_instances.items():
@@ -88,6 +86,10 @@ def add_instances(num):
 
 @webapp.route('/remove/<num>', methods=['POST'])
 def delete_instances(num):
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
     num_int = 0
     try:
         num_int= int(num)
@@ -121,6 +123,10 @@ def delete_instances(num):
 
 @webapp.route('/delete_all_data', methods=["POST"])
 def delete_all_data():
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
     cnx = connection.MySQLConnection(user='photo_db_user', password='photo_db',
                                      host='54.208.46.115',
                                      database='photo_db')
@@ -147,6 +153,14 @@ def delete_all_data():
     flash("deleted %d users, %d photos from db"%(users_del,photos_del))
     return redirect('/')
 
+@webapp.route('/get_cpu_graph/<id>', methods=["GET"])
+def get_graph(id):
+    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+        flash("You are not logged in!")
+        return redirect('/login')
+
+    print("getting graph")
+    return send_from_directory(webapp.config['UPLOAD_FOLDER'], id+".png",cache_timeout=1, last_modified = datetime.now())
 
 
 def return_info():
@@ -236,6 +250,37 @@ def get_cpu(instance_id):
             for y in v:
                 #print(y['Average'])
                 return y['Average']
+
+
+def get_cpu_graph(instance_id):
+    client = boto3.client('cloudwatch')
+    metric_json = json.dumps(
+            {
+                "width": 300,
+                "height": 200,
+                "period":300,
+                "start":"-PT1H",
+                "end":"PT0H",
+                "timezone": '-0500',
+                "view": "timeSeries",
+                "stacked": False,
+                "stat": "Average",
+                "title": instance_id,
+                "metrics": [[ "AWS/EC2", "CPUUtilization", "InstanceId", instance_id ]],
+
+            }
+        )
+    response = client.get_metric_widget_image(
+        MetricWidget=metric_json,
+    )
+    image = {'file': response['MetricWidgetImage']}
+    path =webapp.config['UPLOAD_FOLDER'] + instance_id + ".png"
+    file = open(path, "wb")
+
+    file.write(image["file"])
+
+    file.close()
+
 
 def create_instance(worker_num):
     #print("+++++++++++++++++++++++++++++++creating worker number %d"%worker_num)

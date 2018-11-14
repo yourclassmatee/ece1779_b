@@ -16,6 +16,7 @@ webapp.config.from_object(app_config[config_name])
 webapp.config.from_pyfile('config.py')
 
 from app import main
+from app import sign_in
 
 
 
