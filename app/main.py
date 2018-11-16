@@ -201,6 +201,15 @@ def get_graph(id):
     #print("getting graph")
     return send_from_directory(webapp.config['UPLOAD_FOLDER'], id+".png",cache_timeout=1, last_modified = datetime.now())
 
+@webapp.route('/get_cpu_ajax', methods=['GET'])
+def get_cpu_ajax():
+    cpu_util = {}
+    for id, inst in prev_instances.items():
+        if inst.state_name != "terminated":
+            cpu_util[id] = get_cpu(id)
+    return json.dumps(cpu_util)
+
+
 
 def return_info():
     instance_infos = []

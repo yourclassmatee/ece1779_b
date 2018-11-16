@@ -104,7 +104,7 @@
         <td>Not yet passed status checks</td>
         {% endif %}
         <td>{{info.health_check_status}}</td>
-        <td>{{info.cpu_util}}</td>
+        <td id='{{info.id}}'>{{info.cpu_util}}</td>
     </tr>
     {%endif%}
     {%endfor%}
@@ -119,24 +119,32 @@
 
 
 <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
-
+<script type=text/javascript>
+    $SCRIPT_ROOT = {{ request.script_root|tojson|safe }};
+</script>
 <script>
 
-/*(function(){
+(function(){
     // do some stuff
-    console.log("lallal");
+    //console.log("lallal");
      $.ajax({
-            url: '/get_instances',
+            url: $SCRIPT_ROOT + '/get_cpu_ajax',
             type: 'GET',
             success: function(response) {
-                console.log(response);
+                var obj  = JSON.parse(response)
+                //console.log(obj);
+                for (id in obj){
+                    //.log(id);
+                    //console.log(obj[id])
+                    document.getElementById(id).innerHTML = obj[id]
+                }
             },
             error: function(error) {
                 console.log(error);
             }
         });
-    setTimeout(arguments.callee, 5000);
-})();*/
+    setTimeout(arguments.callee, 30000);
+})();
 </script>
 
 
