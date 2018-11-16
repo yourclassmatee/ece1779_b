@@ -22,6 +22,7 @@ class InstanceInfo:
     cpu_util = 0
 
 class ScalingParams:
+    enabled = False
     util_for_add = 60.0
     util_for_remove = 0.1
     add_ratio = 2
@@ -32,7 +33,7 @@ new_created_instances = []
 
 @webapp.route('/')
 def main():
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
 
@@ -44,12 +45,12 @@ def main():
 
 @webapp.route('/update_params', methods=["POST"])
 def update_params():
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER'] :
         flash("You are not logged in!")
         return redirect('/login')
 
-    if(request.method == 'POST'):
-        if(request.form):
+    if request.method == 'POST':
+        if request.form:
             try:
                 if float(request.form.get("util_for_add")) < float(request.form.get("util_for_remove")):
                     flash("Cpu threashold for growing should be larger then for shrinking")
@@ -61,14 +62,22 @@ def update_params():
                 ScalingParams.util_for_remove= float(request.form.get("util_for_remove"))
                 ScalingParams.add_ratio = int(request.form.get("add_ratio"))
                 ScalingParams.remove_ratio = int(request.form.get("remove_ratio"))
+
+                if request.form.get("auto_scaling") == "on":
+                    ScalingParams.enabled = True
+                else:
+                    ScalingParams.enabled = False
+                #print("=====================%s"%str(ScalingParams.enabled))
             except:
                 flash("You have entered an invalid parameter.")
+                return redirect('/')
+            flash("Auto scaling parameters are updated")
     return redirect('/')
 
 
 @webapp.route('/add/<num>', methods=['POST'])
 def add_instances(num):
-    if session.get('username') is None or session['username'] != webapp.config['ROOT_USER']:
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
     result = do_add_instance(num)
@@ -102,7 +111,7 @@ def do_add_instance(num):
 
 @webapp.route('/remove/<num>', methods=['POST'])
 def delete_instances(num):
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
     num_int = 0
@@ -153,7 +162,7 @@ def do_delete_instance(num_int):
 
 @webapp.route('/delete_all_data', methods=["POST"])
 def delete_all_data():
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
 
@@ -185,11 +194,11 @@ def delete_all_data():
 
 @webapp.route('/get_cpu_graph/<id>', methods=["GET"])
 def get_graph(id):
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('admin') is None or session['admin'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
 
-    print("getting graph")
+    #print("getting graph")
     return send_from_directory(webapp.config['UPLOAD_FOLDER'], id+".png",cache_timeout=1, last_modified = datetime.now())
 
 
@@ -240,10 +249,14 @@ def auto_scaling():
     if len(new_created_instances) > 0:
         for id in new_created_instances:
             if check_status(id):
-                print("instance id %s is ready"%id)
+                print("auto-scaling: new instance id %s is ready"%id)
                 #register to load balancer
                 register_instance(id)
                 new_created_instances.remove(id)
+        return
+
+    if not ScalingParams.enabled:
+        print("auto-scaling: off")
         return
 
     all_instances= list_instances()
@@ -344,16 +357,16 @@ def get_cpu(instance_id):
     for k, v in response.items():
         if k == 'Datapoints':
             if len(v) == 0:
-                print("no data point")
+                #print("no data point")
                 return None
             elif len(v) == 1:
-                print("only 1 data point, "+str(v[0]['Average']))
+                #print("only 1 data point, "+str(v[0]['Average']))
                 return v[0]['Average']
             elif v[0]['Timestamp'] < v[1]['Timestamp']:
-                print("2 data points, use "+str(v[1]['Average']))
+                #print("2 data points, use "+str(v[1]['Average']))
                 return v[1]['Average']
             elif v[0]['Timestamp'] > v[1]['Timestamp']:
-                print("2 data points, use "+str(v[0]['Average']))
+                #print("2 data points, use "+str(v[0]['Average']))
                 return v[0]['Average']
 
 

@@ -35,17 +35,33 @@
 
 <h2> Manually grow and shrink worker pool </h2>
 <form method="POST" action="/add/1">
+    {% if params.enabled %}
+    <input type="submit" value="Add 1 worker" disabled>
+    {%else%}
     <input type="submit" value="Add 1 worker">
+    {%endif%}
 </form>
 
 <form method="POST" action="/remove/1">
+    {% if params.enabled %}
+    <input type="submit" value="Remove 1 worker" disabled>
+    {%else%}
     <input type="submit" value="Remove 1 worker">
+    {%endif%}
+
 </form>
 
 
 <h2>Update auto-scaling parameters </h2>
 
 <form method="POST" action="/update_params">
+    {% if params.enabled %}
+    <input type="radio" name="auto_scaling" value="off">Manual Scaling <br>
+    <input type="radio" name="auto_scaling" value="on" checked>Auto Scaling <br>
+    {%else%}
+    <input type="radio" name="auto_scaling" value="off" checked>Manual Scaling <br>
+    <input type="radio" name="auto_scaling" value="on">Auto Scaling <br>
+    {%endif%}
 
     <label>CPU threshold for growing the worker pool</label> <br>
     <input type="text" name="util_for_add" value="{{params.util_for_add}}"><br/>
