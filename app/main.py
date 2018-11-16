@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from mysql.connector import connection
 from math import *
 import boto3
+from statistics import mean
 
 BUCKET = 'photos-ece1779-a2'
 ARN = "arn:aws:elasticloadbalancing:us-east-1:824599980641:targetgroup/a2workers/300f86a44db73bce"
@@ -22,7 +23,7 @@ class InstanceInfo:
 
 class ScalingParams:
     util_for_add = 60.0
-    util_for_remove = 1.0
+    util_for_remove = 0.1
     add_ratio = 2
     remove_ratio = 4
 
@@ -36,8 +37,9 @@ def main():
         return redirect('/login')
 
     response = return_info()
-    for id in response.keys():
-        get_cpu_graph(id)
+    for id,inst in response.items():
+        if inst.state_name != "terminated":
+            get_cpu_graph(id, inst.name)
     return render_template("main.html", instance_info = response, params = ScalingParams)
 
 @webapp.route('/update_params', methods=["POST"])
@@ -49,6 +51,12 @@ def update_params():
     if(request.method == 'POST'):
         if(request.form):
             try:
+                if float(request.form.get("util_for_add")) < float(request.form.get("util_for_remove")):
+                    flash("Cpu threashold for growing should be larger then for shrinking")
+                    return redirect("/")
+                if int(request.form.get("add_ratio")) < 1 or int(request.form.get("remove_ratio")) < 1:
+                    flash("Ratios should be larger than 1")
+                    return redirect("/")
                 ScalingParams.util_for_add = float(request.form.get("util_for_add"))
                 ScalingParams.util_for_remove= float(request.form.get("util_for_remove"))
                 ScalingParams.add_ratio = int(request.form.get("add_ratio"))
@@ -60,14 +68,22 @@ def update_params():
 
 @webapp.route('/add/<num>', methods=['POST'])
 def add_instances(num):
-    if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
+    if session.get('username') is None or session['username'] != webapp.config['ROOT_USER']:
         flash("You are not logged in!")
         return redirect('/login')
+    result = do_add_instance(num)
+    if result == False:
+        flash("Create instance failed")
+    else:
+        flash("Created %d instances. "%len(new_created_instances))
+    return redirect('/')
 
+def do_add_instance(num):
     # get the largest worker name
     largest_worker = 0
-    for key, value in prev_instances.items():
-        curr_worker = int(value.name.split('_')[-1])
+    instances = list_instances()
+    for key, value in instances.items():
+        curr_worker = int(value[0].split('_')[-1])
         if curr_worker > largest_worker:
             largest_worker = curr_worker
 
@@ -76,47 +92,61 @@ def add_instances(num):
 
     for i in range(int(num)):
         new_id = create_instance(largest_worker+i)
-        if(new_id == None):
-            #TODO: handle create instance failure
-            flash("create instance failed")
-            return redirect("/")
-        new_created_instances.append(new_id)
-    flash("Created %d instances. "%len(new_created_instances))
-    return redirect("/")
+        if new_id is not None:
+            new_created_instances.append(new_id)
+            print("Created instance %s"%new_id)
+        else:
+            print("Create instance failed")
+            return False
+    return True
 
 @webapp.route('/remove/<num>', methods=['POST'])
 def delete_instances(num):
     if(session.get('username') is None or session['username'] != webapp.config['ROOT_USER']):
         flash("You are not logged in!")
         return redirect('/login')
-
     num_int = 0
     try:
-        num_int= int(num)
+        num_int = int(num)
     except:
-        flash("Must be int")
+        flash("Instance number must be int")
         return "/"
-    print("%d, %d"%(num_int, len(prev_instances)))
-    if num_int > len(prev_instances):
+    result = do_delete_instance(num_int)
+    if result:
+        flash("Deleted %s instances"%num)
+    else:
         flash("Trying to delete more instances than available")
-        return redirect('/')
+    return redirect('/')
+
+
+def do_delete_instance(num_int):
+    all_instances = list_instances()
+    healthy_instances = 0
+    for key in all_instances.keys():
+        if health_check(key) == "healthy":
+            healthy_instances += 1
+
+    if num_int >= healthy_instances:
+        print("Trying to delete more instances than available")
+        return False
 
     for i in range(num_int):
         # get the largest worker name
-        largest_worker = 0
+        largest_worker = -1
         largest_worker_id = ""
-        for key, value in prev_instances.items():
-            curr_worker = int(value.name.split('_')[-1])
-            if curr_worker > largest_worker:
-                largest_worker = curr_worker
-                largest_worker_id = key
+        for key, value in all_instances.items():
+            if health_check(key) == "healthy":
+                curr_worker = int(value[0].split('_')[-1])
+                if curr_worker > largest_worker:
+                    largest_worker = curr_worker
+                    largest_worker_id = key
+        if largest_worker != -1:
+            deregister_instance(largest_worker_id)
+            terminate_instance(largest_worker_id)
+        print("deleting instance id %s" % largest_worker_id)
+        #prev_instances.pop(largest_worker_id)
 
-        deregister_instance(largest_worker_id)
-        terminate_instance(largest_worker_id)
-        prev_instances.pop(largest_worker_id)
-
-    flash("Deleted %d instances"%num_int)
-    return redirect("/")
+    return True
 
 
 
@@ -128,7 +158,7 @@ def delete_all_data():
         return redirect('/login')
 
     cnx = connection.MySQLConnection(user='photo_db_user', password='photo_db',
-                                     host='54.208.46.115',
+                                     host='18.208.110.40',
                                      database='photo_db')
     cursor = cnx.cursor()
     query = "DELETE FROM photo"
@@ -174,7 +204,7 @@ def return_info():
             inst_to_update = prev_instances[id]
             #update state and cpu util
             inst_to_update.state_code = state[1]["Code"]
-            inst_to_update.state_code = state[1]["Name"]
+            inst_to_update.state_name = state[1]["Name"]
             new_util = get_cpu(id)
             if new_util is not None:
                 inst_to_update.cpu_util = new_util
@@ -216,33 +246,57 @@ def auto_scaling():
                 new_created_instances.remove(id)
         return
 
+    all_instances= list_instances()
     # otherwise, check CPU
     cpu_utils=[]
-    current_instance_num=len(prev_instances)
-    for key, value in prev_instances.items():
-        cpu_util=get_cpu(key)
-        if cpu_util is not None:
-            cpu_utils.append(cpu_util)
+    current_healthy_instance_num=0
 
-    larger_than_add_threshold=[x for x in cpu_utils if x >= ScalingParams.util_for_add]
-    less_than_add_threshold = [x for x in cpu_utils if x <= ScalingParams.util_for_remove]
-    if len(larger_than_add_threshold) == len(less_than_add_threshold) :
-        print("auto-scaling: do nothing")
-        return # do nothing
-    elif len(larger_than_add_threshold) >= len(cpu_utils)/2 :
-        if ScalingParams.add_ratio <= 1 :
-            flash("auto-scaling: Expand working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
-            return
-        create_instance_num = current_instance_num * (ScalingParams.add_ratio-1)
-        print("auto-scaling: add %d new instances"%create_instance_num)
-        #add_instances(create_instance_num)
-    elif len(less_than_add_threshold) >= len(cpu_utils)/2 :
-        if ScalingParams.remove_ratio <= 1 :
-            flash("Shrink working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
-            return
-        terminate_instance_num= floor(current_instance_num - current_instance_num / ScalingParams.remove_ratio)
-        print("auto-scaling: remove %d instances"%terminate_instance_num)
-        #delete_instances(terminate_instance_num)
+    for key in all_instances.keys():
+        if health_check(key) == 'healthy':
+            current_healthy_instance_num += 1
+            cpu_util=get_cpu(key)
+            if cpu_util is not None:
+                cpu_utils.append(cpu_util)
+
+    avg_cpu=mean(cpu_utils)
+    if avg_cpu > ScalingParams.util_for_add:
+        create_instance_num = current_healthy_instance_num * (ScalingParams.add_ratio - 1)
+        print("auto-scaling: avg cpu %f, add %d new instances" %(avg_cpu,create_instance_num))
+        do_add_instance(create_instance_num)
+    elif avg_cpu < ScalingParams.util_for_remove:
+        terminate_instance_num = floor(current_healthy_instance_num - current_healthy_instance_num / ScalingParams.remove_ratio)
+        print("auto-scaling: avg cpu %f, remove %d instances" %(avg_cpu,terminate_instance_num))
+        do_delete_instance(terminate_instance_num)
+    else:
+        print("auto-scaling: avg cpu %f, do nothing"%avg_cpu)
+
+    # larger_than_add_threshold=[x for x in cpu_utils if x >= ScalingParams.util_for_add]
+    # less_than_add_threshold = [x for x in cpu_utils if x <= ScalingParams.util_for_remove]
+    # print("current healthy instance %d"%current_healthy_instance_num)
+    # print("len(cup_util) %d"%len(cpu_utils))
+    # print("larger than %d: "%ScalingParams.util_for_add)
+    # print(larger_than_add_threshold)
+    # print("less than %d: "%ScalingParams.util_for_remove)
+    # print(less_than_add_threshold)
+    # if len(larger_than_add_threshold) == len(less_than_add_threshold) :
+    #     print("auto-scaling: tie, do nothing")
+    #     return # do nothing
+    # elif len(larger_than_add_threshold) >= len(cpu_utils)/2 :
+    #     if ScalingParams.add_ratio <= 1 :
+    #         print("auto-scaling: Expand working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
+    #         return
+    #     create_instance_num = current_healthy_instance_num * (ScalingParams.add_ratio-1)
+    #     print("auto-scaling: add %d new instances"%create_instance_num)
+    #     do_add_instance(create_instance_num)
+    # elif len(less_than_add_threshold) >= len(cpu_utils)/2 :
+    #     if ScalingParams.remove_ratio <= 1 :
+    #         print("Shrink working pool decision made by auto scaling policy. But scaling ratio <= 1, can't create new instances by policy")
+    #         return
+    #     terminate_instance_num= floor(current_healthy_instance_num - current_healthy_instance_num / ScalingParams.remove_ratio)
+    #     print("auto-scaling: remove %d instances"%terminate_instance_num)
+    #     do_delete_instance(terminate_instance_num)
+    # else:
+    #     print("auto-scaling: do nothing")
 
 
 #==================================functions that interact with aws============================================
@@ -276,7 +330,7 @@ def get_cpu(instance_id):
             'Value': instance_id # instance id
             },
         ],
-        StartTime=datetime.utcnow() - timedelta(seconds=60),
+        StartTime=datetime.utcnow() - timedelta(seconds=120),#60
         EndTime=datetime.utcnow(),
         Period=60,
         Statistics=[
@@ -284,16 +338,26 @@ def get_cpu(instance_id):
         ],
         Unit='Percent'
     )
+    #print(instance_id)
     #print(response)
 
     for k, v in response.items():
         if k == 'Datapoints':
-            for y in v:
-                #print(y['Average'])
-                return y['Average']
+            if len(v) == 0:
+                print("no data point")
+                return None
+            elif len(v) == 1:
+                print("only 1 data point, "+str(v[0]['Average']))
+                return v[0]['Average']
+            elif v[0]['Timestamp'] < v[1]['Timestamp']:
+                print("2 data points, use "+str(v[1]['Average']))
+                return v[1]['Average']
+            elif v[0]['Timestamp'] > v[1]['Timestamp']:
+                print("2 data points, use "+str(v[0]['Average']))
+                return v[0]['Average']
 
 
-def get_cpu_graph(instance_id):
+def get_cpu_graph(instance_id, worker_name):
     client = boto3.client('cloudwatch')
     metric_json = json.dumps(
             {
@@ -306,7 +370,7 @@ def get_cpu_graph(instance_id):
                 "view": "timeSeries",
                 "stacked": False,
                 "stat": "Average",
-                "title": instance_id,
+                "title": worker_name,
                 "metrics": [[ "AWS/EC2", "CPUUtilization", "InstanceId", instance_id ]],
 
             }
@@ -331,21 +395,21 @@ def create_instance(worker_num):
     . venv/bin/activate
     export FLASK_CONFIG=development
     export FLASK_APP=run.py
-    gunicorn --bind 0.0.0.0:5000 wsgi:webapp"""
+    python run.py"""
 
     ec2 = boto3.resource('ec2')
     instance = ec2.create_instances(
-        ImageId='ami-06d9cdc2781e0470e',
+        ImageId='ami-06349291ec46d10f3',
         MinCount=1,
         MaxCount=1,
         KeyName="a2_1779",
-        #SecurityGroups=[
-        #    'launch-wizard-2',
-        #],
+        SecurityGroups=[
+            'launch-wizard-2',
+        ],
         Monitoring={
             'Enabled': True
         },
-        UserData=user_data_script,
+        #UserData=user_data_script,
         #SubnetId='subnet-6c951b30',
         TagSpecifications=[
             {
@@ -365,7 +429,7 @@ def create_instance(worker_num):
 
     #print("instance: "+ new_instance_id + " is created.")
     #print("instance: "+ new_instance_id + " is starting...")
-    instance[0].modify_attribute(Groups=['sg-0cda2de92a6fd6f4a'])
+    #instance[0].modify_attribute(Groups=['sg-0cda2de92a6fd6f4a'])
     return new_instance_id
 
 

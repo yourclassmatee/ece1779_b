@@ -77,6 +77,7 @@
     </tr>
 
     {% for info in instance_info.values() %}
+    {%if info.state_name != "terminated"%}
     <tr>
         <td>{{info.name}}</td>
         <td>{{info.id}}</td>
@@ -89,14 +90,15 @@
         <td>{{info.health_check_status}}</td>
         <td>{{info.cpu_util}}</td>
     </tr>
+    {%endif%}
     {%endfor%}
 
 </table>
 
 {% for info in instance_info.values() %}
-
+{%if info.state_name != "terminated"%}
 <img src="{{url_for('get_graph', id=info.id)}}">
-
+{%endif%}
 {%endfor%}
 
 
